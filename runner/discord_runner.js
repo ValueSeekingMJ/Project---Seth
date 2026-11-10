@@ -92,15 +92,13 @@ client.once('ready', () => {
     } else {
         console.log(`ℹ️ OpenAI API 키 미설정 (runner/openai_key.txt 파일 생성 시 활성화)`);
     }
-    console.log("📱 명령어:");
-    console.log("   !claude <명령> : Claude Code CLI 실행 (두뇌)");
-    console.log(`   !codex <명령>  : ${config.codex_model} 코드/연출 생성 (손)`);
-    console.log(`   !image <프롬프트>: ${config.image_model} 이미지 생성 및 디스코드 전송 (손)`);
+    console.log("📱 웹훅 및 디스코드 원격 명령 대기 중!");
     console.log("=".repeat(50));
 });
 
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+    // 봇 본인이 보낸 답장만 무시 (무한 루프 방지, 웹훅 메시지는 정상 수신)
+    if (message.author.id === client.user.id) return;
 
     const content = message.content.trim();
 
@@ -130,9 +128,7 @@ client.on('messageCreate', async (message) => {
                     size: "1024x1024"
                 });
             } catch (modelErr) {
-                // 모델명 오류 시 fallback 시도
                 if (config.fallback_image_model && config.fallback_image_model !== imgModel) {
-                    console.log(`⚠️ ${imgModel} 실패, fallback (${config.fallback_image_model}) 시도...`);
                     response = await openaiClient.images.generate({
                         model: config.fallback_image_model,
                         prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
@@ -186,7 +182,6 @@ client.on('messageCreate', async (message) => {
                 });
             } catch (modelErr) {
                 if (config.fallback_codex_model && config.fallback_codex_model !== codexModel) {
-                    console.log(`⚠️ ${codexModel} 실패, fallback (${config.fallback_codex_model}) 시도...`);
                     completion = await openaiClient.chat.completions.create({
                         model: config.fallback_codex_model,
                         messages: [
@@ -215,7 +210,7 @@ client.on('messageCreate', async (message) => {
     let claudePrompt = null;
     if (content.startsWith('!claude')) {
         claudePrompt = content.replace('!claude', '').trim();
-    } else if (message.mentions.has(client.user)) {
+    } else if (message.mentions && message.mentions.has && message.mentions.has(client.user)) {
         claudePrompt = message.clean_content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
     }
 
