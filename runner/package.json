@@ -1,9 +1,10 @@
 {
   "name": "claude-discord-runner",
   "version": "1.0.0",
-  "description": "Discord runner for local Claude Code CLI",
+  "description": "Discord runner for local Claude Code CLI and OpenAI Codex/DALL-E",
   "main": "discord_runner.js",
   "dependencies": {
-    "discord.js": "^14.16.3"
+    "discord.js": "^14.16.3",
+    "openai": "^4.70.2"
   }
 }

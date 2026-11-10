@@ -1,7 +1,14 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+
+let OpenAI;
+try {
+    OpenAI = require('openai');
+} catch (e) {
+    OpenAI = null;
+}
 
 const client = new Client({
     intents: [
@@ -13,17 +20,29 @@ const client = new Client({
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 
-// 토큰 가져오기 (환경변수 -> 인자값 -> token.txt)
-let token = process.env.DISCORD_BOT_TOKEN;
-if (!token && process.argv.length > 2) {
-    token = process.argv[2].trim();
+// 1. 디스코드 토큰 로드
+let discordToken = process.env.DISCORD_BOT_TOKEN;
+if (!discordToken && process.argv.length > 2) {
+    discordToken = process.argv[2].trim();
 }
 const tokenFile = path.join(__dirname, 'token.txt');
-if (!token && fs.existsSync(tokenFile)) {
-    token = fs.readFileSync(tokenFile, 'utf-8').trim();
+if (!discordToken && fs.existsSync(tokenFile)) {
+    discordToken = fs.readFileSync(tokenFile, 'utf-8').trim();
 }
 
-if (!token) {
+// 2. OpenAI API 키 로드
+let openaiApiKey = process.env.OPENAI_API_KEY;
+const openaiKeyFile = path.join(__dirname, 'openai_key.txt');
+if (!openaiApiKey && fs.existsSync(openaiKeyFile)) {
+    openaiApiKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+}
+
+let openaiClient = null;
+if (OpenAI && openaiApiKey) {
+    openaiClient = new OpenAI({ apiKey: openaiApiKey });
+}
+
+if (!discordToken) {
     console.error("=".repeat(50));
     console.error("ERROR: 디스코드 봇 토큰이 없습니다!");
     console.error("사용법: node discord_runner.js 복사한토큰");
@@ -31,29 +50,128 @@ if (!token) {
     process.exit(1);
 }
 
+async function sendLongMessage(channel, text) {
+    while (text.length > 1900) {
+        let chunk = text.substring(0, 1900);
+        const lastNl = chunk.lastIndexOf('\n');
+        if (lastNl !== -1) {
+            chunk = text.substring(0, lastNl);
+            text = text.substring(lastNl + 1);
+        } else {
+            text = text.substring(1900);
+        }
+        await channel.send(`\`\`\`\n${chunk}\n\`\`\``);
+    }
+    if (text.trim()) {
+        await channel.send(`\`\`\`\n${text}\n\`\`\``);
+    }
+}
+
 client.once('ready', () => {
     console.log("=".repeat(50));
-    console.log(`⚡ Discord Claude Runner (Node.js) 로그인 성공: ${client.user.tag}`);
+    console.log(`⚡ Discord Claude & Codex Runner 로그인 성공: ${client.user.tag}`);
     console.log(`📁 작업 디렉토리: ${PROJECT_DIR}`);
-    console.log("📱 이제 디스코드에서 !claude <명령> 또는 봇 멘션으로 일시키세요!");
+    if (openaiClient) {
+        console.log(`✨ OpenAI API (Codex & DALL-E) 연동 활성화됨!`);
+    } else {
+        console.log(`ℹ️ OpenAI API 키 미설정 (runner/openai_key.txt 파일 생성 시 활성화)`);
+    }
+    console.log("📱 명령어:");
+    console.log("   !claude <명령> : Claude Code CLI 실행 (두뇌)");
+    console.log("   !codex <명령>  : GPT-4o 코드/연출 생성 (손)");
+    console.log("   !image <프롬프트>: DALL-E 3 이미지 생성 및 디스코드 전송 (손)");
     console.log("=".repeat(50));
 });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    let prompt = null;
-    if (message.content.startsWith('!claude')) {
-        prompt = message.content.replace('!claude', '').trim();
-    } else if (message.mentions.has(client.user)) {
-        prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
+    const content = message.content.trim();
+
+    // 1. DALL-E 3 이미지 생성 (!image)
+    if (content.startsWith('!image')) {
+        const prompt = content.replace('!image', '').trim();
+        if (!prompt) {
+            await message.channel.send("생성할 이미지 프롬프트를 입력해 주세요. (예: `!image 고대 이집트 세트 슬롯 황금 마스크 심볼`)");
+            return;
+        }
+
+        if (!openaiClient) {
+            await message.channel.send("⚠️ OpenAI API 키가 설정되지 않았습니다. `runner/openai_key.txt` 파일에 키를 넣어주세요.");
+            return;
+        }
+
+        const statusMsg = await message.channel.send(`🎨 **DALL-E 3 이미지 생성 중...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
+
+        try {
+            const response = await openaiClient.images.generate({
+                model: "dall-e-3",
+                prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
+                n: 1,
+                size: "1024x1024",
+                quality: "standard"
+            });
+
+            const imageUrl = response.data[0].url;
+            await message.channel.send({
+                content: `✅ **DALL-E 3 에셋 생성 완료!**\n> 프롬프트: \`${prompt}\``,
+                files: [imageUrl]
+            });
+        } catch (err) {
+            await message.channel.send(`❌ 이미지 생성 오류: \`${err.message}\``);
+        }
+        return;
     }
 
-    if (!prompt) return;
+    // 2. OpenAI GPT-4o 코덱스 (!codex)
+    if (content.startsWith('!codex')) {
+        const prompt = content.replace('!codex', '').trim();
+        if (!prompt) {
+            await message.channel.send("명령을 입력해 주세요. (예: `!codex 6x5 클러스터 텀블 상태 머신 코드 짜줘`)");
+            return;
+        }
 
-    await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${prompt}\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
+        if (!openaiClient) {
+            await message.channel.send("⚠️ OpenAI API 키가 설정되지 않았습니다. `runner/openai_key.txt` 파일에 키를 넣어주세요.");
+            return;
+        }
 
-    const claude = spawn('claude', ['-p', prompt], {
+        const statusMsg = await message.channel.send(`⚙️ **Codex (GPT-4o) 작업 중...**\n> 📋 명령: \`${prompt}\``);
+
+        try {
+            const completion = await openaiClient.chat.completions.create({
+                model: "gpt-4o",
+                messages: [
+                    {
+                        role: "system",
+                        content: "당신은 Project Seth 슬롯 게임의 수석 엔지니어(Codex)입니다. 6x5 클러스터 텀블, 배수 스텝업, 듀얼 캐릭터 연출 및 쉐이더 코드를 전문적으로 작성합니다."
+                    },
+                    { role: "user", content: prompt }
+                ]
+            });
+
+            const reply = completion.choices[0].message.content;
+            await message.channel.send(`✅ **Codex 작업 완료!**`);
+            await sendLongMessage(message.channel, reply);
+        } catch (err) {
+            await message.channel.send(`❌ Codex 실행 오류: \`${err.message}\``);
+        }
+        return;
+    }
+
+    // 3. Claude Code CLI (!claude 또는 멘션)
+    let claudePrompt = null;
+    if (content.startsWith('!claude')) {
+        claudePrompt = content.replace('!claude', '').trim();
+    } else if (message.mentions.has(client.user)) {
+        claudePrompt = message.clean_content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
+    }
+
+    if (!claudePrompt) return;
+
+    await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${claudePrompt}\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
+
+    const claude = spawn('claude', ['-p', claudePrompt], {
         cwd: PROJECT_DIR,
         shell: true
     });
@@ -69,25 +187,10 @@ client.on('messageCreate', async (message) => {
     claude.on('close', async (code) => {
         if (!output.trim()) output = "(출력 내용 없음 / 정상 종료)";
         await message.channel.send(`✅ **Claude Code 작업 완료!** (종료 코드: ${code})`);
-
-        // 1900자씩 분할 전송
-        while (output.length > 1900) {
-            let chunk = output.substring(0, 1900);
-            const lastNl = chunk.lastIndexOf('\n');
-            if (lastNl !== -1) {
-                chunk = output.substring(0, lastNl);
-                output = output.substring(lastNl + 1);
-            } else {
-                output = output.substring(1900);
-            }
-            await message.channel.send(`\`\`\`\n${chunk}\n\`\`\``);
-        }
-        if (output.trim()) {
-            await message.channel.send(`\`\`\`\n${output}\n\`\`\``);
-        }
+        await sendLongMessage(message.channel, output);
     });
 });
 
-client.login(token).catch(err => {
+client.login(discordToken).catch(err => {
     console.error("❌ 로그인 실패! 토큰을 확인해 주세요:", err.message);
 });
