@@ -1,3 +1,8 @@
+const dns = require('dns');
+try {
+    dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
+
 const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -55,7 +60,10 @@ if (!openaiApiKey && fs.existsSync(openaiKeyFile)) {
 
 let openaiClient = null;
 if (OpenAI && openaiApiKey) {
-    openaiClient = new OpenAI({ apiKey: openaiApiKey });
+    openaiClient = new OpenAI({ 
+        apiKey: openaiApiKey,
+        timeout: 60000
+    });
 }
 
 if (!discordToken) {
@@ -129,12 +137,20 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
+        // 실시간으로 키 파일 재확인 (러너 재실행 없이도 키 파일 인식)
+        if (!openaiClient && fs.existsSync(openaiKeyFile)) {
+            const freshKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+            if (freshKey && OpenAI) {
+                openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
+            }
+        }
+
         if (!openaiClient) {
             await message.channel.send("⚠️ OpenAI API 키가 설정되지 않았습니다. `runner/openai_key.txt` 파일에 키를 넣어주세요.");
             return;
         }
 
-        const statusMsg = await message.channel.send(`🎨 **${config.image_model} 이미지 생성 중...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
+        const statusMsg = await message.channel.send(`🎨 **이미지 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
 
         try {
             let imgModel = config.image_model;
@@ -142,15 +158,16 @@ client.on('messageCreate', async (message) => {
             try {
                 response = await openaiClient.images.generate({
                     model: imgModel,
-                    prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
+                    prompt: prompt,
                     n: 1,
                     size: "1024x1024"
                 });
             } catch (modelErr) {
+                console.log(`기본 모델(${imgModel}) 실패, 폴백(${config.fallback_image_model}) 시도:`, modelErr.message);
                 if (config.fallback_image_model && config.fallback_image_model !== imgModel) {
                     response = await openaiClient.images.generate({
                         model: config.fallback_image_model,
-                        prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
+                        prompt: prompt,
                         n: 1,
                         size: "1024x1024"
                     });
@@ -165,7 +182,8 @@ client.on('messageCreate', async (message) => {
                 files: [imageUrl]
             });
         } catch (err) {
-            await message.channel.send(`❌ 이미지 생성 오류: \`${err.message}\``);
+            console.error("이미지 생성 에러 상세:", err);
+            await message.channel.send(`❌ 이미지 생성 오류: \`${err.name}: ${err.message}\``);
         }
         return;
     }
@@ -178,12 +196,19 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
+        if (!openaiClient && fs.existsSync(openaiKeyFile)) {
+            const freshKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+            if (freshKey && OpenAI) {
+                openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
+            }
+        }
+
         if (!openaiClient) {
             await message.channel.send("⚠️ OpenAI API 키가 설정되지 않았습니다. `runner/openai_key.txt` 파일에 키를 넣어주세요.");
             return;
         }
 
-        const statusMsg = await message.channel.send(`⚙️ **Codex (${config.codex_model}) 작업 중...**\n> 📋 명령: \`${prompt}\``);
+        const statusMsg = await message.channel.send(`⚙️ **Codex 작업 중...**\n> 📋 명령: \`${prompt}\``);
 
         try {
             let codexModel = config.codex_model;
@@ -228,7 +253,7 @@ client.on('messageCreate', async (message) => {
                 await message.channel.send("🚀 **GitHub 자동 푸시 완료!** 피클이 최신 코드를 즉시 읽을 수 있습니다.");
             }
         } catch (err) {
-            await message.channel.send(`❌ Codex 실행 오류: \`${err.message}\``);
+            await message.channel.send(`❌ Codex 실행 오류: \`${err.name}: ${err.message}\``);
         }
         return;
     }
@@ -245,7 +270,6 @@ client.on('messageCreate', async (message) => {
 
     await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${claudePrompt.substring(0, 100)}...\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
 
-    // --dangerously-skip-permissions 플래그로 비대화형 파일 쓰기 권한 자동 허용
     const claude = spawn('claude', ['-p', '--dangerously-skip-permissions'], {
         cwd: PROJECT_DIR,
         shell: true,
