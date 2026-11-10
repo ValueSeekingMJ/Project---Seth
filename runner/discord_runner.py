@@ -3,19 +3,17 @@
 노트북에서 켜두면 디스코드 채널의 멘션이나 !claude 명령을 감지하여
 로컬 Claude Code CLI를 백그라운드에서 실행하고 결과를 회신합니다.
 
-필요 패키지:
-    pip install discord.py
-실행:
-    (Windows PowerShell)
-    $env:DISCORD_BOT_TOKEN="your_bot_token"
-    python discord_runner.py
-
-    (Mac/Linux)
-    export DISCORD_BOT_TOKEN="your_bot_token"
-    python discord_runner.py
+실행 방법 (3가지 중 편한 것 선택):
+1. 인자값으로 직접 전달:
+   python discord_runner.py 내_봇_토큰
+2. token.txt 파일에 토큰만 적어두고:
+   python discord_runner.py
+3. 환경변수 설정 후:
+   python discord_runner.py
 """
 
 import os
+import sys
 import subprocess
 import asyncio
 import discord
@@ -31,7 +29,6 @@ async def send_long_message(channel, text: str):
     """디스코드 2000자 제한을 고려하여 긴 텍스트를 분할 전송"""
     while len(text) > 1900:
         chunk = text[:1900]
-        # 줄바꿈 단위로 자르기 시도
         last_newline = chunk.rfind('\n')
         if last_newline != -1:
             chunk = text[:last_newline]
@@ -79,7 +76,6 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # 봇 멘션으로 호출했을 때도 처리
     if bot.user in message.mentions:
         cleaned_prompt = message.clean_content.replace(f"@{bot.user.name}", "").strip()
         if cleaned_prompt:
@@ -97,9 +93,26 @@ async def on_ready():
     print("=" * 50)
 
 if __name__ == "__main__":
+    # 1. 환경변수 확인
     token = os.environ.get("DISCORD_BOT_TOKEN")
+
+    # 2. 커맨드라인 인자값 확인 (python discord_runner.py 토큰값)
+    if not token and len(sys.argv) > 1:
+        token = sys.argv[1].strip()
+
+    # 3. token.txt 파일 확인
+    token_file = os.path.join(os.path.dirname(__file__), "token.txt")
+    if not token and os.path.exists(token_file):
+        with open(token_file, "r", encoding="utf-8") as f:
+            token = f.read().strip()
+
     if not token:
-        print("ERROR: DISCORD_BOT_TOKEN 환경변수가 설정되지 않았습니다.")
-        print("사용법: DISCORD_BOT_TOKEN='토큰값' python discord_runner.py")
+        print("=" * 50)
+        print("ERROR: 디스코드 봇 토큰이 없습니다!")
+        print("가장 쉬운 실행 방법:")
+        print("  python discord_runner.py 내_봇_토큰")
+        print("또는 runner 폴더 안에 token.txt 파일을 만들고 토큰을 붙여넣으세요.")
+        print("=" * 50)
         exit(1)
+
     bot.run(token)
