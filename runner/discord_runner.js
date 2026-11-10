@@ -25,12 +25,12 @@ const client = new Client({
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 
-// 0. 설정 파일 로드 (config.json)
+// 0. 설정 파일 로드 (config.json) - 최신 Images 2.6 공식 모델 ID 적용
 let config = {
     codex_model: "gpt-4o",
-    image_model: "dall-e-3",
+    image_model: "gpt-image-2.6-sunburst",
     fallback_codex_model: "gpt-4o-mini",
-    fallback_image_model: "dall-e-2"
+    fallback_image_model: "gpt-image-2.6-flare"
 };
 const configFile = path.join(__dirname, 'config.json');
 if (fs.existsSync(configFile)) {
@@ -41,12 +41,11 @@ if (fs.existsSync(configFile)) {
     }
 }
 
-// 키 정제 함수: UTF-8 BOM, UTF-16LE(), 널 바이트, 공백, 따옴표 등 모든 인코딩 잡음 완벽 제거
+// 키 정제 함수: UTF-8 BOM, UTF-16LE, 널 바이트, 공백, 따옴표 등 모든 인코딩 잡음 완벽 제거
 function extractApiKey(filePath) {
     if (!fs.existsSync(filePath)) return '';
     try {
         const buf = fs.readFileSync(filePath);
-        // UTF-16LE / UTF-8 등 어떤 인코딩이든 널 바이트와 비ASCII 제거 후 순수 키만 추출
         const str = buf.toString('latin1').replace(/\x00/g, '');
         const match = str.match(/sk-[a-zA-Z0-9_\-]+/);
         if (match) return match[0];
@@ -128,6 +127,7 @@ client.once('ready', () => {
     console.log(`📁 작업 디렉토리: ${PROJECT_DIR}`);
     if (openaiApiKey) {
         console.log(`✨ OpenAI API 키 로드 완료! (앞 8자리: ${openaiApiKey.substring(0, 8)}...)`);
+        console.log(`🖼️ 공식 이미지 모델: ${config.image_model} (폴백: ${config.fallback_image_model})`);
     } else {
         console.log(`ℹ️ OpenAI API 키 미설정 (runner/openai_key.txt 파일 생성 시 활성화)`);
     }
@@ -160,24 +160,25 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        const statusMsg = await message.channel.send(`🎨 **DALL-E 3 고해상도 에셋 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 렌더링 중입니다 (약 15~20초)...`);
+        const modelName = config.image_model || "gpt-image-2.6-sunburst";
+        const statusMsg = await message.channel.send(`🎨 **${modelName} 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
 
         try {
-            let imgModel = config.image_model || "dall-e-3";
+            let imgModel = modelName;
             let response;
             try {
                 response = await openaiClient.images.generate({
                     model: imgModel,
                     prompt: prompt,
                     n: 1,
-                    size: "1024x1024",
-                    quality: "standard"
+                    size: "1024x1024"
                 });
             } catch (modelErr) {
                 console.log(`기본 모델(${imgModel}) 실패, 폴백 시도:`, modelErr.message);
-                if (config.fallback_image_model && config.fallback_image_model !== imgModel) {
+                const fallback = config.fallback_image_model || "gpt-image-2.6-flare";
+                if (fallback && fallback !== imgModel) {
                     response = await openaiClient.images.generate({
-                        model: config.fallback_image_model,
+                        model: fallback,
                         prompt: prompt,
                         n: 1,
                         size: "1024x1024"
@@ -189,7 +190,7 @@ client.on('messageCreate', async (message) => {
 
             const imageUrl = response.data[0].url;
             await message.channel.send({
-                content: `✅ **DALL-E 3 에셋 렌더링 완료!**\n> 📋 프롬프트: \`${prompt}\``,
+                content: `✅ **GPT-Image-2.6 에셋 렌더링 완료!**\n> 📋 프롬프트: \`${prompt}\``,
                 files: [imageUrl]
             });
         } catch (err) {
