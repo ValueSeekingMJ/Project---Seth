@@ -28,9 +28,9 @@ const PROJECT_DIR = path.resolve(__dirname, '..');
 // 0. 설정 파일 로드 (config.json)
 let config = {
     codex_model: "6.1",
-    image_model: "gpt-image",
+    image_model: "dall-e-3",
     fallback_codex_model: "gpt-4o",
-    fallback_image_model: "dall-e-3"
+    fallback_image_model: "dall-e-2"
 };
 const configFile = path.join(__dirname, 'config.json');
 if (fs.existsSync(configFile)) {
@@ -39,6 +39,16 @@ if (fs.existsSync(configFile)) {
     } catch (e) {
         console.error("config.json 파싱 오류:", e.message);
     }
+}
+
+// 키 정제 함수 (Windows 메모장 UTF-8 BOM, 따옴표, 환경변수 접두사 제거)
+function cleanKey(raw) {
+    if (!raw) return '';
+    return raw
+        .replace(/^\uFEFF/, '')                 // UTF-8 BOM 제거
+        .replace(/^OPENAI_API_KEY\s*=\s*/i, '') // OPENAI_API_KEY= 접두사 제거
+        .replace(/["']/g, '')                   // 앞뒤 따옴표 제거
+        .trim();
 }
 
 // 1. 디스코드 토큰 로드
@@ -52,10 +62,10 @@ if (!discordToken && fs.existsSync(tokenFile)) {
 }
 
 // 2. OpenAI API 키 로드
-let openaiApiKey = process.env.OPENAI_API_KEY;
+let openaiApiKey = cleanKey(process.env.OPENAI_API_KEY);
 const openaiKeyFile = path.join(__dirname, 'openai_key.txt');
 if (!openaiApiKey && fs.existsSync(openaiKeyFile)) {
-    openaiApiKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+    openaiApiKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
 }
 
 let openaiClient = null;
@@ -124,7 +134,6 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
-    // 봇 본인이 보낸 답장만 무시 (무한 루프 방지, 웹훅 메시지는 정상 수신)
     if (message.author.id === client.user.id) return;
 
     const content = message.content.trim();
@@ -137,9 +146,9 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        // 실시간으로 키 파일 재확인 (러너 재실행 없이도 키 파일 인식)
-        if (!openaiClient && fs.existsSync(openaiKeyFile)) {
-            const freshKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+        // 실시간으로 키 파일 재확인 및 정제
+        if (fs.existsSync(openaiKeyFile)) {
+            const freshKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
             if (freshKey && OpenAI) {
                 openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
             }
@@ -153,7 +162,7 @@ client.on('messageCreate', async (message) => {
         const statusMsg = await message.channel.send(`🎨 **이미지 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
 
         try {
-            let imgModel = config.image_model;
+            let imgModel = config.image_model || "dall-e-3";
             let response;
             try {
                 response = await openaiClient.images.generate({
@@ -163,7 +172,7 @@ client.on('messageCreate', async (message) => {
                     size: "1024x1024"
                 });
             } catch (modelErr) {
-                console.log(`기본 모델(${imgModel}) 실패, 폴백(${config.fallback_image_model}) 시도:`, modelErr.message);
+                console.log(`기본 모델(${imgModel}) 실패, 폴백 시도:`, modelErr.message);
                 if (config.fallback_image_model && config.fallback_image_model !== imgModel) {
                     response = await openaiClient.images.generate({
                         model: config.fallback_image_model,
@@ -183,7 +192,8 @@ client.on('messageCreate', async (message) => {
             });
         } catch (err) {
             console.error("이미지 생성 에러 상세:", err);
-            await message.channel.send(`❌ 이미지 생성 오류: \`${err.name}: ${err.message}\``);
+            const cause = err.cause ? ` (원인: ${err.cause.code || err.cause.message || err.cause})` : '';
+            await message.channel.send(`❌ 이미지 생성 오류: \`${err.name}: ${err.message}${cause}\``);
         }
         return;
     }
@@ -196,8 +206,8 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        if (!openaiClient && fs.existsSync(openaiKeyFile)) {
-            const freshKey = fs.readFileSync(openaiKeyFile, 'utf-8').trim();
+        if (fs.existsSync(openaiKeyFile)) {
+            const freshKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
             if (freshKey && OpenAI) {
                 openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
             }
@@ -211,7 +221,7 @@ client.on('messageCreate', async (message) => {
         const statusMsg = await message.channel.send(`⚙️ **Codex 작업 중...**\n> 📋 명령: \`${prompt}\``);
 
         try {
-            let codexModel = config.codex_model;
+            let codexModel = config.codex_model || "gpt-4o";
             let completion;
             try {
                 completion = await openaiClient.chat.completions.create({
@@ -253,7 +263,8 @@ client.on('messageCreate', async (message) => {
                 await message.channel.send("🚀 **GitHub 자동 푸시 완료!** 피클이 최신 코드를 즉시 읽을 수 있습니다.");
             }
         } catch (err) {
-            await message.channel.send(`❌ Codex 실행 오류: \`${err.name}: ${err.message}\``);
+            const cause = err.cause ? ` (원인: ${err.cause.code || err.cause.message || err.cause})` : '';
+            await message.channel.send(`❌ Codex 실행 오류: \`${err.name}: ${err.message}${cause}\``);
         }
         return;
     }
@@ -289,7 +300,6 @@ client.on('messageCreate', async (message) => {
         await message.channel.send(`✅ **Claude Code 작업 완료!** (종료 코드: ${code})`);
         await sendLongMessage(message.channel, output);
 
-        // 출력 결과 자동 파일 저장 및 Git Push
         try {
             const docsDir = path.join(PROJECT_DIR, 'docs');
             if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
@@ -302,7 +312,6 @@ client.on('messageCreate', async (message) => {
         }
     });
 
-    // stdin으로 프롬프트 온전히 전달 후 닫기
     try {
         claude.stdin.write(claudePrompt);
         claude.stdin.end();
