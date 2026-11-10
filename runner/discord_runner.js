@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -80,6 +80,25 @@ async function sendLongMessage(channel, text) {
     }
     if (text.trim()) {
         await channel.send(`\`\`\`\n${text}\n\`\`\``);
+    }
+}
+
+// 자동 Git Push 함수
+function autoGitPush(commitMessage) {
+    try {
+        console.log("🔄 Git 자동 동기화 시작...");
+        execSync('git add .', { cwd: PROJECT_DIR, stdio: 'ignore' });
+        try {
+            execSync(`git commit -m "${commitMessage}"`, { cwd: PROJECT_DIR, stdio: 'ignore' });
+        } catch (e) {
+            // 커밋할 변경사항이 없으면 통과
+        }
+        execSync('git push origin main', { cwd: PROJECT_DIR, stdio: 'ignore' });
+        console.log("✅ Git Push 완료!");
+        return true;
+    } catch (err) {
+        console.error("⚠️ Git Push 실패:", err.message);
+        return false;
     }
 }
 
@@ -200,6 +219,14 @@ client.on('messageCreate', async (message) => {
             const reply = completion.choices[0].message.content;
             await message.channel.send(`✅ **Codex 작업 완료!**`);
             await sendLongMessage(message.channel, reply);
+
+            // 파일 저장 및 자동 깃 푸시
+            const docsDir = path.join(PROJECT_DIR, 'docs');
+            if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
+            fs.writeFileSync(path.join(docsDir, 'codex_latest_output.md'), reply, 'utf-8');
+            if (autoGitPush("docs: Codex 최신 작업물 자동 동기화")) {
+                await message.channel.send("🚀 **GitHub 자동 푸시 완료!** 피클이 최신 코드를 즉시 읽을 수 있습니다.");
+            }
         } catch (err) {
             await message.channel.send(`❌ Codex 실행 오류: \`${err.message}\``);
         }
@@ -237,6 +264,18 @@ client.on('messageCreate', async (message) => {
         if (!output.trim()) output = "(출력 내용 없음 / 정상 종료)";
         await message.channel.send(`✅ **Claude Code 작업 완료!** (종료 코드: ${code})`);
         await sendLongMessage(message.channel, output);
+
+        // 출력 결과 자동 파일 저장 및 Git Push
+        try {
+            const docsDir = path.join(PROJECT_DIR, 'docs');
+            if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
+            fs.writeFileSync(path.join(docsDir, 'art_director_spec.md'), output, 'utf-8');
+            if (autoGitPush("docs: Claude Code 아트 디렉팅 기획서 자동 저장 및 푸시")) {
+                await message.channel.send("🚀 **GitHub에 자동 커밋 & 푸시 완료!** 피클이 실시간으로 기획서를 읽어옵니다.");
+            }
+        } catch (saveErr) {
+            console.error("자동 파일 저장/푸시 오류:", saveErr.message);
+        }
     });
 
     // stdin으로 프롬프트 온전히 전달 후 닫기
