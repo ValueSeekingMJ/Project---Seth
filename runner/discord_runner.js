@@ -27,9 +27,9 @@ const PROJECT_DIR = path.resolve(__dirname, '..');
 
 // 0. 설정 파일 로드 (config.json)
 let config = {
-    codex_model: "6.1",
+    codex_model: "gpt-4o",
     image_model: "dall-e-3",
-    fallback_codex_model: "gpt-4o",
+    fallback_codex_model: "gpt-4o-mini",
     fallback_image_model: "dall-e-2"
 };
 const configFile = path.join(__dirname, 'config.json');
@@ -41,14 +41,19 @@ if (fs.existsSync(configFile)) {
     }
 }
 
-// 키 정제 함수 (Windows 메모장 UTF-8 BOM, 따옴표, 환경변수 접두사 제거)
-function cleanKey(raw) {
-    if (!raw) return '';
-    return raw
-        .replace(/^\uFEFF/, '')                 // UTF-8 BOM 제거
-        .replace(/^OPENAI_API_KEY\s*=\s*/i, '') // OPENAI_API_KEY= 접두사 제거
-        .replace(/["']/g, '')                   // 앞뒤 따옴표 제거
-        .trim();
+// 키 정제 함수: UTF-8 BOM, UTF-16LE(), 널 바이트, 공백, 따옴표 등 모든 인코딩 잡음 완벽 제거
+function extractApiKey(filePath) {
+    if (!fs.existsSync(filePath)) return '';
+    try {
+        const buf = fs.readFileSync(filePath);
+        // UTF-16LE / UTF-8 등 어떤 인코딩이든 널 바이트와 비ASCII 제거 후 순수 키만 추출
+        const str = buf.toString('latin1').replace(/\x00/g, '');
+        const match = str.match(/sk-[a-zA-Z0-9_\-]+/);
+        if (match) return match[0];
+        return str.replace(/[^\x20-\x7E]/g, '').trim();
+    } catch (e) {
+        return '';
+    }
 }
 
 // 1. 디스코드 토큰 로드
@@ -62,11 +67,8 @@ if (!discordToken && fs.existsSync(tokenFile)) {
 }
 
 // 2. OpenAI API 키 로드
-let openaiApiKey = cleanKey(process.env.OPENAI_API_KEY);
 const openaiKeyFile = path.join(__dirname, 'openai_key.txt');
-if (!openaiApiKey && fs.existsSync(openaiKeyFile)) {
-    openaiApiKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
-}
+let openaiApiKey = process.env.OPENAI_API_KEY || extractApiKey(openaiKeyFile);
 
 let openaiClient = null;
 if (OpenAI && openaiApiKey) {
@@ -124,8 +126,8 @@ client.once('ready', () => {
     console.log("=".repeat(50));
     console.log(`⚡ Discord Claude & Codex Runner 로그인 성공: ${client.user.tag}`);
     console.log(`📁 작업 디렉토리: ${PROJECT_DIR}`);
-    if (openaiClient) {
-        console.log(`✨ OpenAI API 활성화! (Codex 모델: ${config.codex_model}, Image 모델: ${config.image_model})`);
+    if (openaiApiKey) {
+        console.log(`✨ OpenAI API 키 로드 완료! (앞 8자리: ${openaiApiKey.substring(0, 8)}...)`);
     } else {
         console.log(`ℹ️ OpenAI API 키 미설정 (runner/openai_key.txt 파일 생성 시 활성화)`);
     }
@@ -146,12 +148,11 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        // 실시간으로 키 파일 재확인 및 정제
-        if (fs.existsSync(openaiKeyFile)) {
-            const freshKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
-            if (freshKey && OpenAI) {
-                openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
-            }
+        // 실시간 키 재검사 및 갱신
+        const freshKey = extractApiKey(openaiKeyFile);
+        if (freshKey && (!openaiClient || openaiApiKey !== freshKey)) {
+            openaiApiKey = freshKey;
+            openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
         }
 
         if (!openaiClient) {
@@ -159,7 +160,7 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        const statusMsg = await message.channel.send(`🎨 **이미지 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
+        const statusMsg = await message.channel.send(`🎨 **DALL-E 3 고해상도 에셋 렌더링 시작...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 렌더링 중입니다 (약 15~20초)...`);
 
         try {
             let imgModel = config.image_model || "dall-e-3";
@@ -169,7 +170,8 @@ client.on('messageCreate', async (message) => {
                     model: imgModel,
                     prompt: prompt,
                     n: 1,
-                    size: "1024x1024"
+                    size: "1024x1024",
+                    quality: "standard"
                 });
             } catch (modelErr) {
                 console.log(`기본 모델(${imgModel}) 실패, 폴백 시도:`, modelErr.message);
@@ -187,7 +189,7 @@ client.on('messageCreate', async (message) => {
 
             const imageUrl = response.data[0].url;
             await message.channel.send({
-                content: `✅ **에셋 생성 완료!**\n> 프롬프트: \`${prompt}\``,
+                content: `✅ **DALL-E 3 에셋 렌더링 완료!**\n> 📋 프롬프트: \`${prompt}\``,
                 files: [imageUrl]
             });
         } catch (err) {
@@ -206,11 +208,10 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        if (fs.existsSync(openaiKeyFile)) {
-            const freshKey = cleanKey(fs.readFileSync(openaiKeyFile, 'utf-8'));
-            if (freshKey && OpenAI) {
-                openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
-            }
+        const freshKey = extractApiKey(openaiKeyFile);
+        if (freshKey && (!openaiClient || openaiApiKey !== freshKey)) {
+            openaiApiKey = freshKey;
+            openaiClient = new OpenAI({ apiKey: freshKey, timeout: 60000 });
         }
 
         if (!openaiClient) {
