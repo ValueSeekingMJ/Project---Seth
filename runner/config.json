@@ -1,6 +1,6 @@
 {
-  "codex_model": "6.1",
-  "image_model": "gpt-image",
-  "fallback_codex_model": "gpt-4o",
-  "fallback_image_model": "dall-e-3"
+  "codex_model": "gpt-4o",
+  "image_model": "gpt-image-2.6-sunburst",
+  "fallback_codex_model": "gpt-4o-mini",
+  "fallback_image_model": "gpt-image-2.6-flare"
 }
