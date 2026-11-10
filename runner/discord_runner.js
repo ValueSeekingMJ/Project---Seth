@@ -216,11 +216,13 @@ client.on('messageCreate', async (message) => {
 
     if (!claudePrompt) return;
 
-    await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${claudePrompt}\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
+    await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${claudePrompt.substring(0, 100)}...\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
 
-    const claude = spawn('claude', ['-p', claudePrompt], {
+    // Windows cmd.exe의 &, (, ), 따옴표 특수문자 잘림 방지를 위해 stdin으로 프롬프트 전달
+    const claude = spawn('claude', ['-p'], {
         cwd: PROJECT_DIR,
-        shell: true
+        shell: true,
+        stdio: ['pipe', 'pipe', 'pipe']
     });
 
     let output = '';
@@ -236,6 +238,14 @@ client.on('messageCreate', async (message) => {
         await message.channel.send(`✅ **Claude Code 작업 완료!** (종료 코드: ${code})`);
         await sendLongMessage(message.channel, output);
     });
+
+    // stdin으로 프롬프트 온전히 전달 후 닫기
+    try {
+        claude.stdin.write(claudePrompt);
+        claude.stdin.end();
+    } catch (e) {
+        console.error("stdin write error:", e);
+    }
 });
 
 client.login(discordToken).catch(err => {
