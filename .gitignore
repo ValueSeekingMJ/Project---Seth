@@ -1,0 +1,5 @@
+node_modules/
+token.txt
+openai_key.txt
+.webhook_url
+.env
