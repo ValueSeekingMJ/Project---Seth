@@ -20,6 +20,22 @@ const client = new Client({
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 
+// 0. 설정 파일 로드 (config.json)
+let config = {
+    codex_model: "6.1",
+    image_model: "gpt-image",
+    fallback_codex_model: "gpt-4o",
+    fallback_image_model: "dall-e-3"
+};
+const configFile = path.join(__dirname, 'config.json');
+if (fs.existsSync(configFile)) {
+    try {
+        config = { ...config, ...JSON.parse(fs.readFileSync(configFile, 'utf-8')) };
+    } catch (e) {
+        console.error("config.json 파싱 오류:", e.message);
+    }
+}
+
 // 1. 디스코드 토큰 로드
 let discordToken = process.env.DISCORD_BOT_TOKEN;
 if (!discordToken && process.argv.length > 2) {
@@ -72,14 +88,14 @@ client.once('ready', () => {
     console.log(`⚡ Discord Claude & Codex Runner 로그인 성공: ${client.user.tag}`);
     console.log(`📁 작업 디렉토리: ${PROJECT_DIR}`);
     if (openaiClient) {
-        console.log(`✨ OpenAI API (Codex & DALL-E) 연동 활성화됨!`);
+        console.log(`✨ OpenAI API 활성화! (Codex 모델: ${config.codex_model}, Image 모델: ${config.image_model})`);
     } else {
         console.log(`ℹ️ OpenAI API 키 미설정 (runner/openai_key.txt 파일 생성 시 활성화)`);
     }
     console.log("📱 명령어:");
     console.log("   !claude <명령> : Claude Code CLI 실행 (두뇌)");
-    console.log("   !codex <명령>  : GPT-4o 코드/연출 생성 (손)");
-    console.log("   !image <프롬프트>: DALL-E 3 이미지 생성 및 디스코드 전송 (손)");
+    console.log(`   !codex <명령>  : ${config.codex_model} 코드/연출 생성 (손)`);
+    console.log(`   !image <프롬프트>: ${config.image_model} 이미지 생성 및 디스코드 전송 (손)`);
     console.log("=".repeat(50));
 });
 
@@ -88,7 +104,7 @@ client.on('messageCreate', async (message) => {
 
     const content = message.content.trim();
 
-    // 1. DALL-E 3 이미지 생성 (!image)
+    // 1. GPT 이미지 생성 (!image)
     if (content.startsWith('!image')) {
         const prompt = content.replace('!image', '').trim();
         if (!prompt) {
@@ -101,20 +117,36 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        const statusMsg = await message.channel.send(`🎨 **DALL-E 3 이미지 생성 중...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
+        const statusMsg = await message.channel.send(`🎨 **${config.image_model} 이미지 생성 중...**\n> 📋 프롬프트: \`${prompt}\`\n> ⏳ 고해상도 에셋 렌더링 중입니다...`);
 
         try {
-            const response = await openaiClient.images.generate({
-                model: "dall-e-3",
-                prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
-                n: 1,
-                size: "1024x1024",
-                quality: "standard"
-            });
+            let imgModel = config.image_model;
+            let response;
+            try {
+                response = await openaiClient.images.generate({
+                    model: imgModel,
+                    prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
+                    n: 1,
+                    size: "1024x1024"
+                });
+            } catch (modelErr) {
+                // 모델명 오류 시 fallback 시도
+                if (config.fallback_image_model && config.fallback_image_model !== imgModel) {
+                    console.log(`⚠️ ${imgModel} 실패, fallback (${config.fallback_image_model}) 시도...`);
+                    response = await openaiClient.images.generate({
+                        model: config.fallback_image_model,
+                        prompt: `Game asset icon for mobile casino slot game, ancient Egyptian theme: ${prompt}. Professional 3d game render, isolated on pure black background, octane render quality`,
+                        n: 1,
+                        size: "1024x1024"
+                    });
+                } else {
+                    throw modelErr;
+                }
+            }
 
             const imageUrl = response.data[0].url;
             await message.channel.send({
-                content: `✅ **DALL-E 3 에셋 생성 완료!**\n> 프롬프트: \`${prompt}\``,
+                content: `✅ **에셋 생성 완료!**\n> 프롬프트: \`${prompt}\``,
                 files: [imageUrl]
             });
         } catch (err) {
@@ -123,7 +155,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. OpenAI GPT-4o 코덱스 (!codex)
+    // 2. Codex (!codex)
     if (content.startsWith('!codex')) {
         const prompt = content.replace('!codex', '').trim();
         if (!prompt) {
@@ -136,19 +168,39 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        const statusMsg = await message.channel.send(`⚙️ **Codex (GPT-4o) 작업 중...**\n> 📋 명령: \`${prompt}\``);
+        const statusMsg = await message.channel.send(`⚙️ **Codex (${config.codex_model}) 작업 중...**\n> 📋 명령: \`${prompt}\``);
 
         try {
-            const completion = await openaiClient.chat.completions.create({
-                model: "gpt-4o",
-                messages: [
-                    {
-                        role: "system",
-                        content: "당신은 Project Seth 슬롯 게임의 수석 엔지니어(Codex)입니다. 6x5 클러스터 텀블, 배수 스텝업, 듀얼 캐릭터 연출 및 쉐이더 코드를 전문적으로 작성합니다."
-                    },
-                    { role: "user", content: prompt }
-                ]
-            });
+            let codexModel = config.codex_model;
+            let completion;
+            try {
+                completion = await openaiClient.chat.completions.create({
+                    model: codexModel,
+                    messages: [
+                        {
+                            role: "system",
+                            content: "당신은 Project Seth 슬롯 게임의 수석 엔지니어(Codex)입니다. 6x5 클러스터 텀블, 배수 스텝업, 듀얼 캐릭터 연출 및 쉐이더 코드를 전문적으로 작성합니다."
+                        },
+                        { role: "user", content: prompt }
+                    ]
+                });
+            } catch (modelErr) {
+                if (config.fallback_codex_model && config.fallback_codex_model !== codexModel) {
+                    console.log(`⚠️ ${codexModel} 실패, fallback (${config.fallback_codex_model}) 시도...`);
+                    completion = await openaiClient.chat.completions.create({
+                        model: config.fallback_codex_model,
+                        messages: [
+                            {
+                                role: "system",
+                                content: "당신은 Project Seth 슬롯 게임의 수석 엔지니어(Codex)입니다. 6x5 클러스터 텀블, 배수 스텝업, 듀얼 캐릭터 연출 및 쉐이더 코드를 전문적으로 작성합니다."
+                            },
+                            { role: "user", content: prompt }
+                        ]
+                    });
+                } else {
+                    throw modelErr;
+                }
+            }
 
             const reply = completion.choices[0].message.content;
             await message.channel.send(`✅ **Codex 작업 완료!**`);
