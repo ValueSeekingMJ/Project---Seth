@@ -218,8 +218,8 @@ client.on('messageCreate', async (message) => {
 
     await message.channel.send(`🚀 **Claude Code 작업 시작!**\n> 📋 명령: \`${claudePrompt.substring(0, 100)}...\`\n> ⏳ 로컬 터미널에서 작업 중입니다...`);
 
-    // Windows cmd.exe의 &, (, ), 따옴표 특수문자 잘림 방지를 위해 stdin으로 프롬프트 전달
-    const claude = spawn('claude', ['-p'], {
+    // --dangerously-skip-permissions 플래그로 비대화형 파일 쓰기 권한 자동 허용
+    const claude = spawn('claude', ['-p', '--dangerously-skip-permissions'], {
         cwd: PROJECT_DIR,
         shell: true,
         stdio: ['pipe', 'pipe', 'pipe']
